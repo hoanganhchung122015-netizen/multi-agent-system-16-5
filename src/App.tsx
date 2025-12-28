@@ -43,11 +43,13 @@ const useAgentSystem = (selectedSubject: Subject | null) => {
 
       // 2. Gọi luồng Stream từ API
       const stream = await callSMASStream(selectedSubject, finalImage || undefined, voiceText);
+      if (!stream) throw new Error("Không thể kết nối đến máy chủ.");
+
       const reader = stream.getReader();
       const decoder = new TextDecoder();
       let fullText = "";
 
-      // 3. Đọc dữ liệu chảy về theo thời gian thực
+      // 3. Đọc dữ liệu chảy về theo thời gian thực (Fix lỗi Unexpected end of JSON)
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -58,43 +60,53 @@ const useAgentSystem = (selectedSubject: Subject | null) => {
         for (const line of lines) {
           if (line.startsWith("data: ")) {
             try {
-              const data = JSON.parse(line.replace("data: ", ""));
+              const rawData = line.replace("data: ", "").trim();
+              if (!rawData) continue;
+
+              const data = JSON.parse(rawData);
               const textChunk = data.candidates[0].content.parts[0].text;
               fullText += textChunk;
 
-              // Hiển thị trạng thái đang viết để người dùng thấy app cực "nhạy"
-              setLoadingStatus("Chuyên gia đang trình bày...");
+              setLoadingStatus("Chuyên gia đang phân tích...");
               setAllResults(prev => ({ 
                 ...prev, 
-                [AgentType.SPEED]: "Đang phân tích dữ liệu..." 
+                [AgentType.SPEED]: "Đang nhận dữ liệu lời giải..." 
               }));
-            } catch (e) { /* Chờ chunk tiếp theo để hoàn thiện JSON */ }
+            } catch (e) { 
+              // Bỏ qua lỗi parse từng mảnh lẻ để đợi mảnh cuối hoàn thiện JSON
+              continue; 
+            }
           }
         }
       }
 
       // 4. Xử lý dữ liệu cuối cùng sau khi Stream xong
-      const finalData = JSON.parse(fullText);
-      
-      // Đổ dữ liệu vào Chuyên gia Giải Nhanh (Speed)
-      setParsedSpeedResult({
-        finalAnswer: finalData.solution.ans,
-        casioSteps: finalData.solution.steps.join("\n\n")
-      });
-      
-      // Đổ dữ liệu vào Chuyên gia Sư Phạm (Socratic) và các tab khác
-      setAllResults({
-        [AgentType.SPEED]: finalData.solution.ans,
-        [AgentType.SOCRATIC]: "### Phân tích mấu chốt:\n" + finalData.solution.steps.join("\n\n"),
-        [AgentType.PERPLEXITY]: "Hệ thống đã chuẩn bị bài tập luyện tập bên dưới."
-      });
+      try {
+        const finalData = JSON.parse(fullText);
+        
+        setParsedSpeedResult({
+          finalAnswer: finalData.solution.ans,
+          casioSteps: (finalData.solution.steps || []).join("\n\n")
+        });
+        
+        setAllResults({
+          [AgentType.SPEED]: finalData.solution.ans,
+          [AgentType.SOCRATIC]: "### Phân tích mấu chốt:\n" + (finalData.solution.steps || []).join("\n\n"),
+          [AgentType.PERPLEXITY]: "Hệ thống đã chuẩn bị bài tập tương tự bên dưới."
+        });
 
-      // Đổ dữ liệu vào phần Quiz trắc nghiệm
-      setQuiz(finalData.quiz);
+        setQuiz(finalData.quiz);
+      } catch (e) {
+        console.error("JSON Error:", fullText);
+        throw new Error("AI trả về định dạng không đúng. Hãy thử lại.");
+      }
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Lỗi:", error);
-      setAllResults(prev => ({ ...prev, [AgentType.SPEED]: "Lỗi kết nối. Hãy kiểm tra Internet hoặc API Key!" }));
+      setAllResults(prev => ({ 
+        ...prev, 
+        [AgentType.SPEED]: `⚠️ Lỗi: ${error.message || "Kết nối thất bại"}. Hãy kiểm tra API Key!` 
+      }));
     } finally {
       setLoading(false);
       setLoadingStatus("");
@@ -104,7 +116,7 @@ const useAgentSystem = (selectedSubject: Subject | null) => {
   return { allResults, parsedSpeedResult, loading, loadingStatus, quiz, setAllResults, setQuiz, setParsedSpeedResult, runAgents };
 };
 
-// --- COMPONENT LOGO ---
+// --- COMPONENT LOGO (Đã sửa lỗi SVG path) ---
 const AgentLogo = React.memo(({ type, active }: { type: AgentType, active: boolean }) => {
   const cls = `w-3.5 h-3.5 ${active ? 'text-blue-600' : 'text-white'} transition-colors duration-300`;
   switch (type) {
@@ -112,14 +124,14 @@ const AgentLogo = React.memo(({ type, active }: { type: AgentType, active: boole
       return <svg className={cls} viewBox="0 0 24 24" fill="currentColor"><path d="M13 10V3L4 14H11V21L20 10H13Z" /></svg>;
     case AgentType.SOCRATIC: 
       return (
-        <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+        <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="10"/>
           <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
           <line x1="12" y1="17" x2="12.01" y2="17"/>
         </svg>
       );
     case AgentType.PERPLEXITY: 
-      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>;
+      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>;
     default: return null;
   }
 });
@@ -135,29 +147,26 @@ const App: React.FC = () => {
   const [diaryEntries, setDiaryEntries] = useState<DiaryEntry[]>([]);
   const [showSaveSuccess, setShowSaveSuccess] = useState(false);
 
-  // Camera States
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [showCamera, setShowCamera] = useState(false);
   const [isCounting, setIsCounting] = useState(false);
   const [countdown, setCountdown] = useState(3);
-  const [isRecording, setIsRecording] = useState(false);
 
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const recognitionRef = useRef<any>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const agents = useMemo(() => Object.values(AgentType), []);
   const { allResults, parsedSpeedResult, loading, loadingStatus, quiz, runAgents, setAllResults, setQuiz, setParsedSpeedResult } = useAgentSystem(selectedSubject);
 
-  // Load Diary
+  const agents = useMemo(() => Object.values(AgentType), []);
+
   useEffect(() => {
     const saved = localStorage.getItem('symbiotic_diary');
     if (saved) setDiaryEntries(JSON.parse(saved));
   }, []);
 
-  // Handlers
   const handleSubjectSelect = (sub: Subject) => {
     setImage(null); setVoiceText(''); setQuiz(null); setAllResults({}); setParsedSpeedResult(null);
+    setQuizAnswered(null);
     if (sub === Subject.DIARY) { setScreen('DIARY'); }
     else { setSelectedSubject(sub); setScreen('INPUT'); }
   };
@@ -167,7 +176,7 @@ const App: React.FC = () => {
     try {
       const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
       if (videoRef.current) videoRef.current.srcObject = s;
-    } catch { setShowCamera(false); alert("Lỗi camera!"); }
+    } catch { setShowCamera(false); alert("Hãy cấp quyền camera!"); }
   };
 
   useEffect(() => {
@@ -192,7 +201,7 @@ const App: React.FC = () => {
   };
 
   const handleRunAnalysis = () => {
-    if (!image && !voiceText) return alert("Hãy chụp ảnh hoặc nói gì đó!");
+    if (!image && !voiceText) return alert("Vui lòng nhập đề bài hoặc chụp ảnh!");
     setScreen('ANALYSIS');
     runAgents(voiceText, image);
   };
@@ -220,7 +229,6 @@ const App: React.FC = () => {
       onBack={() => setScreen(screen === 'ANALYSIS' ? 'INPUT' : 'HOME')} 
       title={selectedSubject || (screen === 'DIARY' ? 'Nhật ký' : 'SM-AS')}
     >
-      {/* --- HOME SCREEN --- */}
       {screen === 'HOME' && (
         <div className="grid grid-cols-2 gap-4 mt-4 animate-in fade-in duration-500">
           {[
@@ -237,7 +245,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* --- INPUT SCREEN --- */}
       {screen === 'INPUT' && (
         <div className="space-y-8 animate-in fade-in duration-500">
           <div className="w-full aspect-[16/10] bg-blue-50/70 rounded-[2.5rem] flex items-center justify-center overflow-hidden border-2 border-blue-100 relative shadow-inner">
@@ -246,7 +253,7 @@ const App: React.FC = () => {
             ) : image ? (
               <img src={image} className="p-4 h-full object-contain" alt="Preview" />
             ) : (
-              <div className="p-10 text-center text-blue-900 font-bold">{voiceText || "Sẵn sàng nhận đề bài..."}</div>
+              <div className="p-10 text-center text-blue-900 font-bold">{voiceText || "Đang chờ đề bài..."}</div>
             )}
             {isCounting && <div className="absolute inset-0 flex items-center justify-center text-7xl font-black text-white drop-shadow-lg">{countdown}</div>}
           </div>
@@ -264,7 +271,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* --- ANALYSIS SCREEN --- */}
       {screen === 'ANALYSIS' && (
         <div className="space-y-6 animate-in fade-in duration-500">
           <div className="flex items-center justify-center bg-blue-600 p-2 rounded-2xl shadow-lg text-white">
@@ -287,41 +293,42 @@ const App: React.FC = () => {
             ) : (
               <div className="animate-in fade-in slide-in-from-top-4 duration-700">
                 <div className="flex justify-between items-center mb-4">
-                  <span className="text-[10px] font-black uppercase text-slate-400">KẾT QUẢ CHUYÊN GIA</span>
+                  <span className="text-[10px] font-black uppercase text-slate-400">TRÌNH BÀY CHI TIẾT</span>
                   <button onClick={handleSaveDiary} className="p-2 bg-blue-50 text-blue-600 rounded-full active:scale-90 transition-all">
-                    {showSaveSuccess ? "✅ Đã lưu" : "💾 Lưu Nhật ký"}
+                    {showSaveSuccess ? "✅ Đã lưu" : "💾 Lưu"}
                   </button>
                 </div>
                 
                 <div className="prose prose-slate max-w-none text-sm leading-relaxed">
                   <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                    {allResults[selectedAgent] || "Đang soạn thảo..."}
+                    {allResults[selectedAgent] || "Đang chuẩn bị nội dung..."}
                   </ReactMarkdown>
                 </div>
 
                 {selectedAgent === AgentType.SPEED && parsedSpeedResult?.casioSteps && (
                   <div className="mt-6 bg-emerald-50 p-4 rounded-2xl border-l-4 border-emerald-500">
-                    <h4 className="text-[10px] font-black text-emerald-600 uppercase mb-2">Hướng dẫn Casio 580VN X:</h4>
+                    <h4 className="text-[10px] font-black text-emerald-600 uppercase mb-2">Casio 580VN X:</h4>
                     <p className="text-sm whitespace-pre-wrap text-emerald-900">{parsedSpeedResult.casioSteps}</p>
                   </div>
                 )}
 
                 {quiz && (
                   <div className="mt-8 pt-8 border-t border-slate-100">
-                    <h4 className="text-[10px] font-black text-amber-600 uppercase mb-4">Bài tập tự luyện:</h4>
+                    <h4 className="text-[10px] font-black text-amber-600 uppercase mb-4">Tự luyện tập:</h4>
                     <div className="bg-amber-50/50 p-5 rounded-[2rem]">
                       <p className="font-bold mb-4">{quiz.q}</p>
                       <div className="grid gap-2">
-                        {quiz.opt.map((o: string, i: number) => {
+                        {(quiz.opt || []).map((o: string, i: number) => {
                           const char = String.fromCharCode(65+i);
+                          const isCorrect = i === quiz.correct;
                           return (
-                            <button key={i} onClick={() => setQuizAnswered(char)} className={`w-full text-left p-4 rounded-2xl border transition-all font-bold text-xs ${quizAnswered === char ? (i === quiz.correct ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-red-500 border-red-500 text-white') : 'bg-white border-slate-100'}`}>
+                            <button key={i} onClick={() => setQuizAnswered(char)} className={`w-full text-left p-4 rounded-2xl border transition-all font-bold text-xs ${quizAnswered === char ? (isCorrect ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-red-500 border-red-500 text-white') : 'bg-white border-slate-100'}`}>
                               {char}. {o}
                             </button>
                           );
                         })}
                       </div>
-                      {quizAnswered && <p className="mt-4 text-xs italic text-slate-500">💡 {quiz.reason}</p>}
+                      {quizAnswered && <p className="mt-4 text-xs italic text-slate-500 font-medium">💡 Giải thích: {quiz.reason}</p>}
                     </div>
                   </div>
                 )}
@@ -331,20 +338,23 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* --- DIARY SCREEN --- */}
       {screen === 'DIARY' && (
         <div className="space-y-4 animate-in fade-in duration-500">
-          {diaryEntries.slice().reverse().map((entry, idx) => (
-            <div key={idx} className="bg-white rounded-[2rem] p-6 border border-slate-100 shadow-sm">
-              <div className="flex justify-between items-center mb-4">
-                <span className="text-[10px] font-black text-slate-400 uppercase">{entry.date} - {entry.subject}</span>
+          {diaryEntries.length === 0 ? (
+            <p className="text-center py-10 text-slate-400 font-bold uppercase text-xs">Chưa có dữ liệu nhật ký</p>
+          ) : (
+            diaryEntries.slice().reverse().map((entry, idx) => (
+              <div key={idx} className="bg-white rounded-[2rem] p-6 border border-slate-100 shadow-sm">
+                <div className="flex justify-between items-center mb-4">
+                  <span className="text-[10px] font-black text-slate-400 uppercase">{entry.date} - {entry.subject}</span>
+                </div>
+                <p className="text-sm font-bold mb-3">Đề bài: {entry.input.substring(0, 50)}...</p>
+                <div className="prose prose-slate text-xs border-t pt-4">
+                  <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{entry.resultContent}</ReactMarkdown>
+                </div>
               </div>
-              <p className="text-sm font-bold mb-3">Đề: {entry.input}</p>
-              <div className="prose prose-slate text-xs border-t pt-4">
-                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{entry.resultContent}</ReactMarkdown>
-              </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       )}
     </Layout>
