@@ -1,0 +1,8 @@
+{
+  "name": "Multi-Agent-Systems-16-1",
+  "description": "Hệ thống AI đa tác vụ hỗ trợ ôn thi THPT Quốc gia các môn Toán, Lý, Hóa với các chuyên gia ảo chuyên biệt.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
