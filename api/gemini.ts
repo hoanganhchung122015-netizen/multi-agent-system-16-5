@@ -1,86 +1,102 @@
-export const config = { runtime: 'edge' };
+export const config = {
+  runtime: 'edge', // Sử dụng Edge Runtime để tốc độ phản hồi nhanh nhất
+};
 
-export default async function (req: Request) {
+export default async function handler(req: Request) {
+  // 1. Chỉ cho phép phương thức POST
+  if (req.method !== 'POST') {
+    return new Response(JSON.stringify({ error: "Method Not Allowed" }), { 
+      status: 405,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
   try {
-    // 1. Chỉ chấp nhận phương thức POST
-    if (req.method !== 'POST') {
-      return new Response(JSON.stringify({ error: "Chỉ chấp nhận phương thức POST" }), { status: 405 });
-    }
-
-    // 2. Lấy dữ liệu từ body và API Key
+    // 2. Lấy dữ liệu từ Frontend gửi lên
     const { subject, image, voiceText } = await req.json();
     const apiKey = process.env.GEMINI_API_KEY;
 
-    // Kiểm tra API Key ngay lập tức
+    // Kiểm tra API Key
     if (!apiKey) {
-      console.error("LỖI: Chưa cấu hình GEMINI_API_KEY trên Vercel!");
-      return new Response(JSON.stringify({ error: "Server chưa cấu hình API Key" }), { status: 500 });
+      return new Response(JSON.stringify({ error: "Server thiếu API Key. Hãy kiểm tra biến môi trường GEMINI_API_KEY." }), { 
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
 
-    // 3. Xây dựng nội dung gửi tới Gemini
-    const prompt = `Bạn là hệ thống giải bài tập SM-AS. 
-    Hãy giải bài tập môn ${subject}. 
-    YÊU CẦU BẮT BUỘC: Chỉ trả về JSON theo đúng cấu trúc sau, không kèm lời giải thích bên ngoài:
+    // 3. Xây dựng cấu trúc 'parts' cho Google API
+    // Kết hợp cả văn bản (môn học, đề bài) và hình ảnh (nếu có)
+    const promptText = `Bạn là chuyên gia giải bài tập của hệ thống SM-AS.
+    Môn học: ${subject}.
+    Yêu cầu: Giải chi tiết đề bài này và trả về kết quả dưới dạng JSON thuần túy.
+    
+    CẤU TRÚC JSON CẦN TRẢ VỀ:
     {
       "solution": {
-        "ans": "Đáp án cuối cùng (dùng Markdown/LaTeX nếu cần)",
-        "steps": ["Bước giải 1", "Bước giải 2", "Bước giải 3"]
+        "ans": "Đáp án cuối cùng ngắn gọn",
+        "steps": ["Bước giải 1...", "Bước giải 2...", "Bước giải 3..."]
       },
       "quiz": {
-        "q": "Một câu hỏi trắc nghiệm tương tự để luyện tập",
+        "q": "Câu hỏi trắc nghiệm tương tự để luyện tập",
         "opt": ["Lựa chọn A", "Lựa chọn B", "Lựa chọn C", "Lựa chọn D"],
         "correct": 0,
-        "reason": "Giải thích ngắn gọn tại sao chọn đáp án đó"
+        "reason": "Giải thích ngắn gọn lý do chọn đáp án đó"
       }
     }
-    Nội dung đề bài: ${voiceText || 'Đề bài nằm trong hình ảnh đi kèm'}`;
-
-    const parts: any[] = [{ text: prompt }];
     
-    // Kiểm tra và xử lý ảnh an toàn
+    Nội dung bổ sung từ người dùng: ${voiceText || "Vui lòng xem trong hình ảnh đính kèm"}.`;
+
+    const parts: any[] = [{ text: promptText }];
+
+    // Xử lý hình ảnh (Base64) nếu có
     if (image && typeof image === 'string' && image.includes(',')) {
       parts.push({
         inlineData: {
           mimeType: "image/jpeg",
-          data: image.split(',')[1]
+          data: image.split(',')[1] // Lấy phần dữ liệu sau dấu phẩy
         }
       });
     }
 
-    // 4. Gọi Google Gemini API với chế độ Stream (SSE)
-    const response = await fetch(
+    // 4. Gọi API Google Gemini với chế độ Stream (SSE)
+    const googleResponse = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?alt=sse&key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ parts }],
-          generationConfig: { 
+          generationConfig: {
             responseMimeType: "application/json",
-            temperature: 0.1 // Để kết quả ổn định, ít bị sáng tạo quá mức
+            temperature: 0.1
           }
         })
       }
     );
 
-    // 5. Kiểm tra phản hồi từ Google
-    if (!response.ok) {
-      const errorDetail = await response.text();
-      console.error("Lỗi từ Google API:", errorDetail);
-      return new Response(JSON.stringify({ error: "Google API phản hồi lỗi", details: errorDetail }), { status: response.status });
+    // 5. Kiểm tra lỗi từ phía Google
+    if (!googleResponse.ok) {
+      const errorData = await googleResponse.text();
+      return new Response(JSON.stringify({ error: "Lỗi từ Google API", details: errorData }), { 
+        status: googleResponse.status,
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
 
-    // 6. Trả về luồng dữ liệu (Stream) cho Frontend
-    return new Response(response.body, {
-      headers: { 
+    // 6. Trả về luồng dữ liệu (Stream) trực tiếp cho Frontend
+    return new Response(googleResponse.body, {
+      headers: {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         "Connection": "keep-alive"
       }
     });
 
-  } catch (err: any) {
-    console.error("Lỗi hệ thống tại API Gemini:", err.message);
-    return new Response(JSON.stringify({ error: "Lỗi hệ thống", message: err.message }), { status: 500 });
+  } catch (error: any) {
+    // Xử lý các lỗi hệ thống khác
+    return new Response(JSON.stringify({ error: "Lỗi Server Nội Bộ", message: error.message }), { 
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 }
