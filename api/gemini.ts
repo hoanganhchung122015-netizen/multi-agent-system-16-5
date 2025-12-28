@@ -3,7 +3,7 @@ export const config = { runtime: 'edge' };
 export default async function (req: Request) {
   try {
     const { subject, image, voiceText } = await req.json();
-    const apiKey = process.env.VITE_GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
 
     // Prompt "Siêu Sạch" ép AI trả về JSON cấu trúc cứng
     const prompt = `Bạn là hệ thống SM-AS. Chỉ trả về JSON, không chào hỏi.
@@ -45,3 +45,4 @@ export default async function (req: Request) {
     return new Response(JSON.stringify({ error: "Lỗi Server" }), { status: 500 });
   }
 }
+
