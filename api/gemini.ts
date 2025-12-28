@@ -30,7 +30,8 @@ export default async function (req: Request) {
           contents: [{
             parts: [
               { text: prompt },
-              ...(image ? [{ inlineData: { mimeType: "image/jpeg", data: image.split(",")[1] } }] : [])
+...(image && image.includes(",") 
+    ? [{ inlineData: { mimeType: "image/jpeg", data: image.split(",")[1] } }] : [])
             ]
           }],
           generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
@@ -45,4 +46,5 @@ export default async function (req: Request) {
     return new Response(JSON.stringify({ error: "Lỗi Server" }), { status: 500 });
   }
 }
+
 
