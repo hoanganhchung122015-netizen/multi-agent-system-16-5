@@ -60,7 +60,7 @@ export default async function handler(req: Request) {
 
     // 4. Gọi API Google Gemini với chế độ Stream (SSE)
     const googleResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash::streamGenerateContent?alt=sse&key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash::streamGenerateContent?alt=sse&key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -100,4 +100,5 @@ export default async function handler(req: Request) {
     });
   }
 }
+
 
